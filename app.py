@@ -1,6 +1,7 @@
+import base64
 import cv2
 import os
-from flask import Flask,session, request, render_template, redirect, url_for
+from flask import Flask, jsonify,session, request, render_template, redirect, url_for
 from datetime import date, datetime
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
@@ -9,6 +10,7 @@ import joblib
 
 # Defining Flask App
 app = Flask(__name__)
+app.secret_key = 'ananyaisthebest'
 
 nimgs = 10
 
@@ -50,7 +52,10 @@ def extract_faces(img):
 
 # Identify face using ML model
 def identify_face(facearray):
-    model = joblib.load('static/face_recognition_model.pkl')
+    model_path = 'static/face_recognition_model.pkl'
+    if not os.path.exists(model_path):
+        raise Exception("No trained model available.")
+    model = joblib.load(model_path)
     return model.predict(facearray)
 
 
@@ -59,6 +64,12 @@ def train_model():
     faces = []
     labels = []
     userlist = os.listdir('static/faces')
+    if not userlist:
+        # If no users, remove model file if it exists and return
+        model_path = 'static/face_recognition_model.pkl'
+        if os.path.exists(model_path):
+            os.remove(model_path)
+        return
     for user in userlist:
         for imgname in os.listdir(f'static/faces/{user}'):
             img = cv2.imread(f'static/faces/{user}/{imgname}')
@@ -136,19 +147,14 @@ def listusers():
 @app.route('/deleteuser', methods=['GET'])
 def deleteuser():
     duser = request.args.get('user')
-    deletefolder('static/faces/'+duser)
-
-    ## if all the face are deleted, delete the trained file...
-    if os.listdir('static/faces/') == []:
-        os.remove('static/face_recognition_model.pkl')
-    try:
+    deletefolder('static/faces/' + duser)
+    # If all faces are deleted, remove the trained model file
+    if len(os.listdir('static/faces/')) == 0:
+        if os.path.exists('static/face_recognition_model.pkl'):
+            os.remove('static/face_recognition_model.pkl')
+    else:
         train_model()
-    except:
-        pass
-
-    # Redirect to home page after deletion
     return redirect(url_for('home'))
-
 
 # A function to add a new user.
 # This function will run when we add a new user.
@@ -255,6 +261,141 @@ def start_attendance():
     names, rolls, times, l = extract_attendance()
     return render_template('home.html', mess=mess, names=names, rolls=rolls, times=times, l=l, totalreg=totalreg(), datetoday2=datetoday2)
 
+@app.route('/admin_login', methods=['GET', 'POST'])
+def admin_login():
+    mess = ""
+    if request.method == 'POST':
+        admin_number = request.form['admin_number']
+        # Start webcam and capture face for authentication
+        cap = cv2.VideoCapture(0)
+        authenticated = False
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            faces = extract_faces(frame)
+            for (x, y, w, h) in faces:
+                face_img = frame[y:y+h, x:x+w]
+                resized_face = cv2.resize(face_img, (50, 50)).ravel().reshape(1, -1)
+                try:
+                    user = identify_face(resized_face)[0]
+                    if user == f"admin_{admin_number}":
+                        authenticated = True
+                        break
+                except:
+                    continue
+            cv2.imshow('Admin Login', frame)
+            if cv2.waitKey(1) == 27 or authenticated:
+                break
+        cap.release()
+        cv2.destroyAllWindows()
+        if authenticated:
+            session['admin_authenticated'] = True
+            return redirect(url_for('admin_controls'))
+        else:
+            mess = "Authentication failed. Try again."
+    return render_template('admin_login.html', mess=mess)
+
+@app.route('/admin_controls')
+def admin_controls():
+    if not session.get('admin_authenticated'):
+        return redirect(url_for('admin_login'))
+    userlist, names, rolls, l = getallusers()
+    users = zip(userlist, names, rolls)
+    return render_template('admin_controls.html', users=users)
+
+
+@app.route('/remove_user', methods=['POST'])
+def remove_user():
+    if not session.get('admin_authenticated'):
+        return redirect(url_for('admin_login'))
+    user = request.form['user']
+    deletefolder(f'static/faces/{user}')
+    # If all faces are deleted, remove the trained model file
+    if len(os.listdir('static/faces/')) == 0:
+        if os.path.exists('static/face_recognition_model.pkl'):
+            os.remove('static/face_recognition_model.pkl')
+    else:
+        train_model()
+    return redirect(url_for('admin_controls'))
+
+@app.route('/add_user_via_webcam', methods=['POST'])
+def add_user_via_webcam():
+    data = request.get_json()
+    images = data.get('images')
+    newusername = data.get('newusername')
+    newuserid = data.get('newuserid')
+    if not images or len(images) < 10 or not newusername or not newuserid:
+        return jsonify(success=False, error="Missing data or not enough images"), 400
+
+    try:
+        user_folder = f"static/faces/{newusername}_{newuserid}"
+        if not os.path.isdir(user_folder):
+            os.makedirs(user_folder)
+
+        saved = 0
+        for idx, image_data in enumerate(images):
+            img_bytes = base64.b64decode(image_data.split(',')[1])
+            np_arr = np.frombuffer(img_bytes, np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            faces = extract_faces(frame)
+            for (x, y, w, h) in faces:
+                if w < 80 or h < 80:
+                    continue
+                face_img = frame[y:y+h, x:x+w]
+                img_path = f"{user_folder}/{newusername}_{saved}.jpg"
+                cv2.imwrite(img_path, face_img)
+                saved += 1
+                break  # Save only one face per image
+            if saved >= 10:
+                break
+
+        train_model()
+        return jsonify(success=True)
+    except Exception as e:
+        return jsonify(success=False, error=str(e)), 500
+    
+
+@app.route('/register_admin', methods=['GET', 'POST'])
+def register_admin():
+    mess = ""
+    if request.method == 'POST':
+        if request.is_json:
+            data = request.get_json()
+            admin_name = data.get('admin_name')
+            admin_number = data.get('admin_number')
+            images = data.get('images')
+            if not admin_name or not admin_number or not images or len(images) < 10:
+                return jsonify(success=False, error="Missing data or not enough images"), 400
+
+            admin_folder = f'static/faces/admin_{admin_number}'
+            if os.path.isdir(admin_folder):
+                return jsonify(success=False, error="Admin already exists!")
+            os.makedirs(admin_folder)
+
+            saved = 0
+            for idx, image_data in enumerate(images):
+                img_bytes = base64.b64decode(image_data.split(',')[1])
+                np_arr = np.frombuffer(img_bytes, np.uint8)
+                frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                faces = extract_faces(frame)
+                for (x, y, w, h) in faces:
+                    if w < 80 or h < 80:
+                        continue
+                    face_img = frame[y:y+h, x:x+w]
+                    img_path = f"{admin_folder}/admin_{admin_number}_{saved}.jpg"
+                    cv2.imwrite(img_path, face_img)
+                    saved += 1
+                    break  # Save only one face per image
+                if saved >= 10:
+                    break
+
+            train_model()
+            return jsonify(success=True)
+        # ...legacy form POST code...
+    return render_template('register_admin.html', mess=mess)
+
+
 @app.route('/usermanagement')
 def usermanagement():
     # Simple admin check (replace with real authentication in production)
@@ -262,8 +403,78 @@ def usermanagement():
         return "Access denied", 403
     userlist, names, rolls, l = getallusers()
     return render_template('usermanagement.html', userlist=userlist, names=names, rolls=rolls, l=l, totalreg=totalreg(), datetoday2=datetoday2)
-# ...existing code...
 
-# Our main function which runs the Flask App
+@app.route('/scan_attendance', methods=['POST'])
+def scan_attendance():
+    data = request.get_json()
+    if not data or 'image' not in data:
+        return jsonify(success=False, error="No image data"), 400
+
+    try:
+        # Decode base64 image
+        image_data = data['image'].split(',')[1]
+        img_bytes = base64.b64decode(image_data)
+        np_arr = np.frombuffer(img_bytes, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+        # Detect faces
+        faces = extract_faces(frame)
+        if len(faces) == 0:
+            return jsonify(success=False, error="No face detected")
+
+        for (x, y, w, h) in faces:
+            face_img = frame[y:y+h, x:x+w]
+            if w < 80 or h < 80:
+                continue
+            resized_face = cv2.resize(face_img, (50, 50)).ravel().reshape(1, -1)
+            try:
+                user = identify_face(resized_face)[0]
+                add_attendance(user)
+                username, userid = user.split('_')
+                return jsonify(success=True, name=username)
+            except Exception as e:
+                continue
+
+        return jsonify(success=False, error="Face not recognized")
+    except Exception as e:
+        return jsonify(success=False, error=str(e)), 500
+
+@app.route('/scan_admin_login', methods=['POST'])
+def scan_admin_login():
+    data = request.get_json()
+    if not data or 'image' not in data or 'admin_number' not in data:
+        return jsonify(success=False, error="Missing data"), 400
+
+    try:
+        image_data = data['image'].split(',')[1]
+        img_bytes = base64.b64decode(image_data)
+        np_arr = np.frombuffer(img_bytes, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+        faces = extract_faces(frame)
+        if len(faces) == 0:
+            return jsonify(success=False, error="No face detected")
+
+        admin_id = f"admin_{data['admin_number']}"
+        for (x, y, w, h) in faces:
+            face_img = frame[y:y+h, x:x+w]
+            if w < 80 or h < 80:
+                continue
+            resized_face = cv2.resize(face_img, (50, 50)).ravel().reshape(1, -1)
+            try:
+                user = identify_face(resized_face)[0]
+                if user == admin_id:
+                    name = user.replace('admin_', '')
+                    # Set session for admin authentication
+                    session['admin_authenticated'] = True
+                    # Return redirect URL for admin controls
+                    return jsonify(success=True, name=name, redirect_url=url_for('admin_controls'))
+            except Exception as e:
+                continue
+
+        return jsonify(success=False, error="Face not recognized")
+    except Exception as e:
+        return jsonify(success=False, error=str(e)), 500
+
 if __name__ == '__main__':
     app.run(debug=True)
