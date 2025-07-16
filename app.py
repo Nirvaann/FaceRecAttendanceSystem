@@ -10,7 +10,7 @@ import joblib
 
 # Defining Flask App
 app = Flask(__name__)
-app.secret_key = 'ananyaisthebest'
+app.secret_key = ''
 
 nimgs = 10
 
