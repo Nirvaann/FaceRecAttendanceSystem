@@ -1,7 +1,7 @@
 import base64
 import cv2
 import os
-from flask import Flask, jsonify,session, request, render_template, redirect, url_for
+from flask import Flask, jsonify, session, request, render_template, redirect, url_for
 from datetime import date, datetime
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
@@ -18,10 +18,8 @@ nimgs = 10
 datetoday = date.today().strftime("%m_%d_%y")
 datetoday2 = date.today().strftime("%d-%B-%Y")
 
-
 # Initializing VideoCapture object to access WebCam
 face_detector = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
-
 
 # If these directories don't exist, create them
 if not os.path.isdir('Attendance'):
@@ -34,11 +32,9 @@ if f'Attendance-{datetoday}.csv' not in os.listdir('Attendance'):
     with open(f'Attendance/Attendance-{datetoday}.csv', 'w') as f:
         f.write('Name,Roll,Time')
 
-
 # get a number of total registered users
 def totalreg():
     return len(os.listdir('static/faces'))
-
 
 # extract the face from an image
 def extract_faces(img):
@@ -49,7 +45,6 @@ def extract_faces(img):
     except:
         return []
 
-
 # Identify face using ML model
 def identify_face(facearray):
     model_path = 'static/face_recognition_model.pkl'
@@ -57,7 +52,6 @@ def identify_face(facearray):
         raise Exception("No trained model available.")
     model = joblib.load(model_path)
     return model.predict(facearray)
-
 
 # A function which trains the model on all the faces available in faces folder
 def train_model():
@@ -81,7 +75,6 @@ def train_model():
     knn.fit(faces, labels)
     joblib.dump(knn, 'static/face_recognition_model.pkl')
 
-
 # Extract info from today's attendance file in attendance folder
 def extract_attendance():
     df = pd.read_csv(f'Attendance/Attendance-{datetoday}.csv')
@@ -90,7 +83,6 @@ def extract_attendance():
     times = df['Time']
     l = len(df)
     return names, rolls, times, l
-
 
 # Add Attendance of a specific user
 def add_attendance(name):
@@ -102,7 +94,6 @@ def add_attendance(name):
     if int(userid) not in list(df['Roll']):
         with open(f'Attendance/Attendance-{datetoday}.csv', 'a') as f:
             f.write(f'\n{username},{userid},{current_time}')
-
 
 ## A function to get names and roll numbers of all users
 def getallusers():
@@ -118,14 +109,12 @@ def getallusers():
 
     return userlist, names, rolls, l
 
-
 ## A function to delete a user folder 
 def deletefolder(duser):
     pics = os.listdir(duser)
     for i in pics:
         os.remove(duser+'/'+i)
     os.rmdir(duser)
-
 
 ################## ROUTING FUNCTIONS #########################
 
@@ -135,13 +124,11 @@ def home():
     names, rolls, times, l = extract_attendance()
     return render_template('home.html', names=names, rolls=rolls, times=times, l=l, totalreg=totalreg(), datetoday2=datetoday2)
 
-
 ## List users page
 @app.route('/listusers')
 def listusers():
     userlist, names, rolls, l = getallusers()
     return render_template('listusers.html', userlist=userlist, names=names, rolls=rolls, l=l, totalreg=totalreg(), datetoday2=datetoday2)
-
 
 ## Delete functionality
 @app.route('/deleteuser', methods=['GET'])
@@ -157,7 +144,6 @@ def deleteuser():
     return redirect(url_for('home'))
 
 # A function to add a new user.
-# This function will run when we add a new user.
 @app.route('/add', methods=['GET', 'POST'])
 def add():
     newusername = request.form['newusername']
@@ -188,14 +174,10 @@ def add():
     cv2.destroyAllWindows()
     print('Training Model')
     train_model()
-    
-    # Redirect to the home page after adding the user
     return redirect(url_for('home'))
-
 
 # ...existing code...
 
-# Add this near your other cascade initializations
 eye_detector = cv2.CascadeClassifier('haarcascade_eye.xml')
 
 @app.route('/start')
@@ -216,16 +198,15 @@ def start_attendance():
         if len(faces) == 0:
             cv2.putText(frame, "No face detected", (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
             cv2.imshow('Attendance', frame)
-            # Check for timeout
             if time.time() - start_time > TIMEOUT:
                 mess = "No face detected in camera. Please try again."
                 break
-            if cv2.waitKey(100) == 27:  # ESC to exit
+            if cv2.waitKey(100) == 27:
                 break
             continue
         else:
             face_found = True
-            start_time = time.time()  # Reset timer if face is found
+            start_time = time.time()
 
         for (x, y, w, h) in faces:
             face_img = frame[y:y+h, x:x+w]
@@ -254,7 +235,7 @@ def start_attendance():
                 cv2.imshow('Attendance', frame)
                 cv2.waitKey(500)
         cv2.imshow('Attendance', frame)
-        if cv2.waitKey(100) == 27 or len(recognized) > 0:  # ESC to exit, 100ms per frame
+        if cv2.waitKey(100) == 27 or len(recognized) > 0:
             break
     cap.release()
     cv2.destroyAllWindows()
@@ -265,8 +246,7 @@ def start_attendance():
 def admin_login():
     mess = ""
     if request.method == 'POST':
-        admin_number = request.form['admin_number']
-        # Start webcam and capture face for authentication
+        admin_number = request.form['admin_number'].strip()  # <-- Strip whitespace
         cap = cv2.VideoCapture(0)
         authenticated = False
         while True:
@@ -279,6 +259,8 @@ def admin_login():
                 resized_face = cv2.resize(face_img, (50, 50)).ravel().reshape(1, -1)
                 try:
                     user = identify_face(resized_face)[0]
+                    print("Predicted label:", user)  # <-- Debug print
+                    print("Expected admin_id:", f"admin_{admin_number}")  # <-- Debug print
                     if user == f"admin_{admin_number}":
                         authenticated = True
                         break
@@ -304,14 +286,12 @@ def admin_controls():
     users = zip(userlist, names, rolls)
     return render_template('admin_controls.html', users=users)
 
-
 @app.route('/remove_user', methods=['POST'])
 def remove_user():
     if not session.get('admin_authenticated'):
         return redirect(url_for('admin_login'))
     user = request.form['user']
     deletefolder(f'static/faces/{user}')
-    # If all faces are deleted, remove the trained model file
     if len(os.listdir('static/faces/')) == 0:
         if os.path.exists('static/face_recognition_model.pkl'):
             os.remove('static/face_recognition_model.pkl')
@@ -324,7 +304,7 @@ def add_user_via_webcam():
     data = request.get_json()
     images = data.get('images')
     newusername = data.get('newusername')
-    newuserid = data.get('newuserid')
+    newuserid = str(data.get('newuserid')).strip()  # <-- Strip whitespace
     if not images or len(images) < 10 or not newusername or not newuserid:
         return jsonify(success=False, error="Missing data or not enough images"), 400
 
@@ -346,7 +326,7 @@ def add_user_via_webcam():
                 img_path = f"{user_folder}/{newusername}_{saved}.jpg"
                 cv2.imwrite(img_path, face_img)
                 saved += 1
-                break  # Save only one face per image
+                break
             if saved >= 10:
                 break
 
@@ -354,7 +334,6 @@ def add_user_via_webcam():
         return jsonify(success=True)
     except Exception as e:
         return jsonify(success=False, error=str(e)), 500
-    
 
 @app.route('/register_admin', methods=['GET', 'POST'])
 def register_admin():
@@ -363,7 +342,7 @@ def register_admin():
         if request.is_json:
             data = request.get_json()
             admin_name = data.get('admin_name')
-            admin_number = data.get('admin_number')
+            admin_number = str(data.get('admin_number')).strip()  # <-- Strip whitespace
             images = data.get('images')
             if not admin_name or not admin_number or not images or len(images) < 10:
                 return jsonify(success=False, error="Missing data or not enough images"), 400
@@ -386,7 +365,7 @@ def register_admin():
                     img_path = f"{admin_folder}/admin_{admin_number}_{saved}.jpg"
                     cv2.imwrite(img_path, face_img)
                     saved += 1
-                    break  # Save only one face per image
+                    break
                 if saved >= 10:
                     break
 
@@ -395,10 +374,8 @@ def register_admin():
         # ...legacy form POST code...
     return render_template('register_admin.html', mess=mess)
 
-
 @app.route('/usermanagement')
 def usermanagement():
-    # Simple admin check (replace with real authentication in production)
     if request.args.get('admin') != '1':
         return "Access denied", 403
     userlist, names, rolls, l = getallusers()
@@ -411,13 +388,11 @@ def scan_attendance():
         return jsonify(success=False, error="No image data"), 400
 
     try:
-        # Decode base64 image
         image_data = data['image'].split(',')[1]
         img_bytes = base64.b64decode(image_data)
         np_arr = np.frombuffer(img_bytes, np.uint8)
         frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
-        # Detect faces
         faces = extract_faces(frame)
         if len(faces) == 0:
             return jsonify(success=False, error="No face detected")
@@ -446,6 +421,7 @@ def scan_admin_login():
         return jsonify(success=False, error="Missing data"), 400
 
     try:
+        admin_number = str(data['admin_number']).strip()  # <-- Strip whitespace
         image_data = data['image'].split(',')[1]
         img_bytes = base64.b64decode(image_data)
         np_arr = np.frombuffer(img_bytes, np.uint8)
@@ -455,7 +431,7 @@ def scan_admin_login():
         if len(faces) == 0:
             return jsonify(success=False, error="No face detected")
 
-        admin_id = f"admin_{data['admin_number']}"
+        admin_id = f"admin_{admin_number}"
         for (x, y, w, h) in faces:
             face_img = frame[y:y+h, x:x+w]
             if w < 80 or h < 80:
@@ -463,11 +439,11 @@ def scan_admin_login():
             resized_face = cv2.resize(face_img, (50, 50)).ravel().reshape(1, -1)
             try:
                 user = identify_face(resized_face)[0]
+                print("Predicted label:", user)  # <-- Debug print
+                print("Expected admin_id:", admin_id)  # <-- Debug print
                 if user == admin_id:
                     name = user.replace('admin_', '')
-                    # Set session for admin authentication
                     session['admin_authenticated'] = True
-                    # Return redirect URL for admin controls
                     return jsonify(success=True, name=name, redirect_url=url_for('admin_controls'))
             except Exception as e:
                 continue
